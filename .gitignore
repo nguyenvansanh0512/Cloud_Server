@@ -1,10 +1,45 @@
-HELP.md
+### Maven ###
 target/
-.mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
 
-### STS ###
+### Gradle ###
+build/
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### Wrapper ###
+.mvn/wrapper/maven-wrapper.jar
+
+### Logs ###
+*.log
+
+### Upload / Runtime files ###
+uploads/
+tmp/
+storage/
+
+### Documents (TUYỆT ĐỐI KHÔNG COMMIT) ###
+*.doc
+*.docx
+*.pdf
+*.xls
+*.xlsx
+*.ppt
+*.pptx
+
+### Absolute paths (tránh lỗi C:/ D:/) ###
+C:/
+D:/
+
+### IDE ###
+### IntelliJ IDEA ###
+.idea/
+*.iws
+*.iml
+*.ipr
+
+### Eclipse / STS ###
 .apt_generated
 .classpath
 .factorypath
@@ -13,21 +48,16 @@ target/
 .springBeans
 .sts4-cache
 
-### IntelliJ IDEA ###
-.idea
-*.iws
-*.iml
-*.ipr
-
 ### NetBeans ###
 /nbproject/private/
 /nbbuild/
 /dist/
 /nbdist/
 /.nb-gradle/
-build/
-!**/src/main/**/build/
-!**/src/test/**/build/
 
 ### VS Code ###
 .vscode/
+
+### OS ###
+.DS_Store
+Thumbs.db
