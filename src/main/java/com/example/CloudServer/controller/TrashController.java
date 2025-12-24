@@ -4,6 +4,7 @@ import com.example.CloudServer.model.*;
 import com.example.CloudServer.repository.*;
 import lombok.Data;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.transaction.annotation.Transactional;
@@ -63,87 +64,133 @@ public class TrashController {
     }
 
     // 2. Khôi phục (Restore) - Chỉ cần xóa dòng trong bảng TRASH là file tự hiện lại bên All File
-    @PostMapping("/restore/{trashId}")
-    public ResponseEntity<?> restoreItem(@PathVariable Long trashId) {
-        try {
-            Trash trash = trashRepository.findById(trashId)
-                    .orElseThrow(() -> new RuntimeException("Item not found"));
+    // Trong file com/example/CloudServer/controller/TrashController.java
 
-            // Xóa khỏi bảng Trash -> File sẽ không bị chặn bởi Query "NOT IN TRASH" nữa
-            trashRepository.delete(trash);
+    @PostMapping("/restore/{id}")
+    @Transactional // <--- Thêm cái này để đảm bảo toàn vẹn dữ liệu
+    public ResponseEntity<String> restoreItem(@PathVariable Long id) {
+        // 1. Tìm mục trong thùng rác
+        Trash trash = trashRepository.findById(id).orElse(null);
+        if (trash == null) return ResponseEntity.notFound().build();
 
-            return ResponseEntity.ok("Đã khôi phục thành công");
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body("Lỗi: " + e.getMessage());
+        // 2. Nếu là FILE
+        if (trash.getFile() != null) {
+            FileInfo file = trash.getFile();
+
+            // --- ĐOẠN CODE BẠN BỊ THIẾU ---
+            file.setInTrash(false);         // Đánh dấu là không còn ở trong rác
+            fileInfoRepository.save(file);  // Lưu lại vào DB
+            // ------------------------------
         }
+        // 3. Nếu là FOLDER
+        else if (trash.getFolder() != null) {
+            Directory folder = trash.getFolder();
+
+            // --- ĐOẠN CODE BẠN BỊ THIẾU ---
+            folder.setInTrash(false);           // Cần thêm trường inTrash cho Directory nếu chưa có logic tương tự
+            directoryRepository.save(folder);   // Lưu lại
+            // ------------------------------
+        }
+
+        // 4. Xóa khỏi bảng Trash
+        trashRepository.delete(trash);
+
+        return ResponseEntity.ok("Khôi phục thành công");
     }
 
     // 3. Xóa vĩnh viễn (Delete Forever)
-    @DeleteMapping("/{trashId}")
-    @Transactional // ⚠️ Quan trọng: Để xóa đồng bộ, lỗi là hoàn tác hết
-    public ResponseEntity<?> deleteForever(@PathVariable Long trashId) {
-        try {
-            Trash trash = trashRepository.findById(trashId)
-                    .orElseThrow(() -> new RuntimeException("Item not found"));
+    @DeleteMapping("/delete/{id}")
+    @Transactional // <--- QUAN TRỌNG: Bắt buộc có để thực hiện xóa DB
+    public ResponseEntity<String> deleteForever(@PathVariable Long id) {
+        Trash trash = trashRepository.findById(id).orElse(null);
+        if (trash == null) return ResponseEntity.notFound().build();
 
-            // 1. Lưu tham chiếu
-            FileInfo fileToDelete = trash.getFile();
-            Directory folderToDelete = trash.getFolder();
-
-            // 2. Xóa bản ghi trong Trash trước để gỡ khóa ngoại
-            trashRepository.delete(trash);
-
-            // 3. Xóa dữ liệu gốc
-            if (fileToDelete != null) {
-                deleteSingleFile(fileToDelete);
-            } else if (folderToDelete != null) {
-                // Gọi đệ quy xóa folder
-                deleteFolderRecursively(folderToDelete);
-            }
-
-            return ResponseEntity.ok("Đã xóa vĩnh viễn");
-        } catch (Exception e) {
-            e.printStackTrace();
-            return ResponseEntity.badRequest().body("Lỗi: " + e.getMessage());
+        if (trash.getFile() != null) {
+            // Gọi hàm xóa file (đã sửa ở dưới)
+            deleteSingleFile(trash.getFile());
+        } else if (trash.getFolder() != null) {
+            // Gọi hàm xóa folder
+            deleteFolderRecursively(trash.getFolder());
         }
+
+        // Sau khi xóa file/folder xong thì record trong Trash tự động mất
+        // (hoặc delete thủ công nếu logic deleteSingleFile chưa xử lý Trash)
+        if (trashRepository.existsById(id)) {
+            trashRepository.delete(trash);
+        }
+
+        return ResponseEntity.ok("Đã xóa vĩnh viễn");
     }
 
-    // --- CÁC HÀM PHỤ TRỢ (PRIVATE) ---
-
-    // Hàm 1: Xóa 1 file (Vật lý + DB)
+    // HÀM PHỤ TRỢ (Sửa lại logic)
     private void deleteSingleFile(FileInfo file) {
         try {
-            // A. Xóa file vật lý (Sửa đường dẫn "uploads" theo server của bạn)
+            // 1. Xóa file vật lý
             Path root = Paths.get("uploads");
             Path filePath = root.resolve(file.getStoredFilename());
             Files.deleteIfExists(filePath);
         } catch (IOException e) {
-            System.err.println("Lỗi xóa file vật lý: " + file.getOriginalFilename());
+            System.err.println("Lỗi xóa file vật lý: " + e.getMessage());
         }
 
-        // B. Xóa trong Trash nếu nó đang nằm đó
-        trashRepository.deleteByFileId(file.getId());
+        // 2. Xóa liên kết trong Trash TRƯỚC (QUAN TRỌNG)
+        // Dùng deleteBy... là cách an toàn nhất để gỡ bỏ khóa ngoại
+        if (trashRepository.existsByUserIdAndFileId(file.getUserId(), file.getId())) {
+            trashRepository.deleteByFileId(file.getId());
+        }
 
-        // C. Xóa trong bảng Files
+        // 3. Xóa thông tin file
         fileInfoRepository.delete(file);
+    }
+
+    @DeleteMapping("/delete-all")
+    @Transactional
+    public ResponseEntity<String> deleteAllTrash() {
+        try {
+            User user = getCurrentUser();
+            List<Trash> trashList = trashRepository.findByUserIdOrderByDeletedAtDesc(user.getId());
+
+            for (Trash trash : trashList) {
+                // Chỉ gọi hàm xóa file/folder, KHÔNG can thiệp thủ công vào trashRepository ở đây nữa
+                // vì bên trong các hàm deleteSingleFile/deleteFolderRecursively đã tự xử lý Trash rồi.
+                if (trash.getFile() != null) {
+                    deleteSingleFile(trash.getFile());
+                } else if (trash.getFolder() != null) {
+                    deleteFolderRecursively(trash.getFolder());
+                }
+            }
+
+            // Bước chốt: Xóa sạch những gì còn sót lại trong Trash của user này (nếu có lỗi logic nào đó bỏ sót)
+            // Lưu ý: Cần đảm bảo trong TrashRepository có hàm void deleteByUserId(Long userId);
+            // trashRepository.deleteByUserId(user.getId());
+
+            return ResponseEntity.ok("Đã dọn sạch thùng rác");
+        } catch (Exception e) {
+            e.printStackTrace(); // In lỗi ra console để bạn dễ debug
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Lỗi: " + e.getMessage());
+        }
     }
 
     // Hàm 2: Đệ quy xóa Folder (File con + Folder con)
     private void deleteFolderRecursively(Directory folder) {
-        // A. Xóa tất cả FILE trong folder này
+        // A. Xóa FILE con
         List<FileInfo> files = fileInfoRepository.findAllByDirectoryId(folder.getId());
         for (FileInfo file : files) {
             deleteSingleFile(file);
         }
 
-        // B. Xóa tất cả FOLDER CON (Gọi lại chính nó)
+        // B. Xóa FOLDER con
         List<Directory> subFolders = directoryRepository.findAllByParentDirectoryId(folder.getId());
         for (Directory subFolder : subFolders) {
             deleteFolderRecursively(subFolder);
         }
 
-        // C. Xóa chính folder này
-        trashRepository.deleteByFolderId(folder.getId());
+        // C. Xóa Trash liên quan đến folder này
+        if (trashRepository.findByFolderId(folder.getId()).isPresent()) {
+            trashRepository.deleteByFolderId(folder.getId());
+        }
+
+        // D. Xóa Folder
         directoryRepository.delete(folder);
     }
 
